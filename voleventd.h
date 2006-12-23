@@ -1,5 +1,9 @@
-#ifndef __VOL_DISPLAY_H__
-#define __VOL_DISPLAY_H__
+#ifndef __VOLEVENTD_H__
+#define __VOLEVENTD_H__
+
+#include <sys/socket.h>
+#include <sys/un.h>
+#include "messages.h"
 
 #define VERSION 0.1
 
@@ -13,6 +17,8 @@
 #define test_bit(bit, array)    ((array[LONG(bit)] >> OFF(bit)) & 1)
 
 #define PID_FILE "/var/run/voleventd.pid"
+#define VOLEVENTD_SOCKET "voleventd.socket"
+//#define VOLEVENTD_SOCKET "/var/run/voleventd.socket"
 
 #define KEY_MUTE_TOGGLE 113
 #define KEY_VOL_DOWN 114

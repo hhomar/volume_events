@@ -1,6 +1,6 @@
 NAME=voleventd
 CFLAGS = -W -Wall -g
-LIBS = -lasound -lxosd
+LIBS = -lasound
 
 all:
 	gcc $(CFLAGS) -I/lib/modules/`uname -r`/build/include -g -o $(NAME) $(NAME).c $(LIBS)
