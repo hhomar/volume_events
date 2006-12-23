@@ -12,6 +12,8 @@
 #define LONG(x) ((x)/BITS_PER_LONG)
 #define test_bit(bit, array)    ((array[LONG(bit)] >> OFF(bit)) & 1)
 
+#define PID_FILE "/var/run/voleventd.pid"
+
 #define KEY_MUTE_TOGGLE 113
 #define KEY_VOL_DOWN 114
 #define KEY_VOL_UP 115

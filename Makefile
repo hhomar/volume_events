@@ -1,4 +1,4 @@
-NAME=vol_display
+NAME=voleventd
 CFLAGS = -W -Wall -g
 LIBS = -lasound -lxosd
 
