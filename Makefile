@@ -1,12 +1,21 @@
-NAME=voleventd
-CFLAGS = -W -Wall -g
-LIBS = -lasound
+SRV_NAME=voleventd
+CLT_NAME=xosd_vol
+CC=gcc
+CFLAGS=-W -Wall -g
+SRV_LIBS=-lasound
+CLT_LIBS=-lxosd
 
-all:
-	gcc $(CFLAGS) -I/lib/modules/`uname -r`/build/include -g -o $(NAME) $(NAME).c $(LIBS)
+all: client server
+
+client: $(CLT_NAME).c
+	$(CC) $(CFLAGS) $(CLT_NAME).c -o $(CLT_NAME) $(CLT_LIBS)
+
+server: $(SRV_NAME).c
+	$(CC) -I/lib/modules/`uname -r`/build/include $(CFLAGS) $(SRV_NAME).c \
+	-o $(SRV_NAME) $(SRV_LIBS)
 
 clean:
-	rm -f $(NAME)
+	rm -f $(SRV_NAME) $(CLT_NAME)
 
 install:
-	cp -f $(NAME) /usr/bin/
+	cp -f $(SRV_NAME) $(CLT_NAME) /usr/bin/

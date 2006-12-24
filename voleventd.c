@@ -8,9 +8,10 @@
 #include <linux/input.h>
 #include <linux/uinput.h>
 #include <alsa/asoundlib.h>
-//#include <xosd.h>
 #include <errno.h>
 #include "voleventd.h"
+
+int send_message(int client, char *msg);
 
 static int running = -1;
 
@@ -19,22 +20,11 @@ void term_handler(int sig)
     running = -sig;
 }
 
-#if 0
-void
-volume_display(xosd *osd, int percent)
-{
-    char vol_percent[15];
-    snprintf(vol_percent, 15, "Volume - %i%%", percent);
-    xosd_set_timeout(osd, 5);
-    xosd_display(osd, 0, XOSD_string, vol_percent);
-    xosd_display(osd, 1, XOSD_slider, percent);
-}
-#endif
-
 int
 main(int argc, char **argv)
 {
-    int i, ev_fd, rd_event, err;
+    int i, ev_fd, nfds, ev_event, err;
+    struct pollfd *fds;
     char ev_dev[20];
     unsigned long bit[NBITS(EV_MAX)];
     struct input_event ev;
@@ -46,19 +36,20 @@ main(int argc, char **argv)
     char card_id[] = "default";
     snd_mixer_elem_t *elem, *master_elem = NULL;
     long mixer_min, mixer_max, mixer_curr;
-    int muted = 0;
-    //int percent = 0;
+    int muted;
+    int percent;
     
     FILE *pid_fd;
 
-    int s_fd;
+    int s_fd, c_fd = -1, sock_flags;
     struct sockaddr_un server;
-
-    //xosd *osd;
-
+    
+    char msg[20];
+    
 #ifdef SIGTERM
     signal(SIGTERM, term_handler);
 #endif
+    signal(SIGPIPE, SIG_IGN);
 
     if (argc > 1) {
         if (strncmp(argv[1], "-nofork", 7) == 0)
@@ -116,6 +107,11 @@ main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
+    fds = malloc(2 * sizeof(struct pollfd));
+    fds[0].fd = ev_fd;
+    fds[0].events = POLLIN;
+    nfds = 1;
+
     if (should_fork) {
         pid = fork();
         if (pid < 0)
@@ -145,10 +141,14 @@ main(int argc, char **argv)
     }
 
     if ((s_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
-        fprintf(stderr, "%s\n", strerror(errno));
+        fprintf(stderr, "Couldn't create a socket: %s\n", strerror(errno));
         goto cleanup;
         return EXIT_FAILURE;
     } 
+    
+    fds[1].fd = s_fd;
+    fds[1].events = POLLIN;
+    nfds++;
     
     memset(&server, 0, sizeof(struct sockaddr_un));
     server.sun_family = AF_UNIX;
@@ -156,99 +156,112 @@ main(int argc, char **argv)
 
     if (bind(s_fd, (struct sockaddr *) &server,
                 sizeof(struct sockaddr_un)) < 0) {
-        fprintf(stderr, "%s\n", strerror(errno));
+        fprintf(stderr, "Bind failed: %s\n", strerror(errno));
         goto cleanup;
         return EXIT_FAILURE;
     }
 
     if (listen(s_fd, 5) < 0) {
-        fprintf(stderr, "%s\n", strerror(errno));
+        fprintf(stderr, "Listen failed: %s\n", strerror(errno));
         goto cleanup;
         return EXIT_FAILURE;
     }
-
-#if 0 
-    // FIXME: don't want this to block
-    if ((client_fd = accept(s_fd, 0, 0)) < 0) {
-        fprintf(stderr, "%s\n", strerror(errno));
-        goto cleanup;
-        return EXIT_FAILURE;
-    }
-#endif
-
-
-#if 0    
-    /* set volume display options */
-    osd = xosd_create(2);
-    xosd_set_bar_length(osd, 30);
-    xosd_set_pos(osd, XOSD_middle);
-    xosd_set_align(osd, XOSD_center);
-#endif
+   
+    /* non-blocking */ 
+    sock_flags = fcntl(s_fd, F_GETFL, 0);
+    fcntl(s_fd, F_SETFL, sock_flags | O_NONBLOCK);
 
     running = 1;
     while (running > 0) {
-        rd_event = read(ev_fd, &ev, sizeof(struct input_event));
-        /* only use keypresses no key release */
-        if (ev.value <= 0)
-            continue;
+        ev_event = poll(fds, nfds, 200);
+       
+        if (fds[i].revents & POLLIN) {
+            ev_event = read(fds[0].fd, &ev, sizeof(struct input_event));
+            if (ev_event != sizeof(struct input_event))
+                continue;
 
-        switch (ev.code) {
-            case KEY_MUTE_TOGGLE:
-                snd_mixer_selem_get_playback_switch(master_elem, 0, &muted);
-                snd_mixer_selem_set_playback_switch_all(master_elem, !muted);
-#if 0           
-                //xosd_display(osd, 0, XOSD_string, "Volume");
-                if (muted) {
-                    send_message(MSG_MUTE);
-                    //volume_display(osd, 0);
-                }
-                else {
+            /* only use keypresses, no key release */
+            if (ev.value <= 0)
+                continue;
+
+            switch (ev.code) {
+                case KEY_MUTE_TOGGLE:
+                    snd_mixer_selem_get_playback_switch(master_elem, 0, &muted);
+                    snd_mixer_selem_set_playback_switch_all(master_elem, !muted);
+
+                    if (muted) {
+                        strcpy(msg, MSG_MUTE);
+                    }
+                    else {
+                        percent = ((float)mixer_curr/mixer_max) * 100;
+                        snprintf(msg, 12, "%s %i", MSG_UNMUTE, percent);
+                    }
+                    
+                    if (send_message(c_fd, msg) == -1) {
+                        close(c_fd);
+                        c_fd = -1;
+                    }
+                    break;
+                case KEY_VOL_DOWN:
+                    snd_mixer_selem_get_playback_volume(master_elem, 0, &mixer_curr);
+                    if ((mixer_curr-1) < mixer_min)
+                        mixer_curr = mixer_min;
+                    else
+                        mixer_curr--;
+                    snd_mixer_selem_set_playback_volume_all(master_elem, mixer_curr);
+
                     percent = ((float)mixer_curr/mixer_max) * 100;
-                    snprintf(buf, 12, "%s %i", MSG_UNMUTE, percent);
-                    send_message(buf); 
-                    //volume_display(osd, percent);
-                }
-#endif
-                break;
-            case KEY_VOL_DOWN:
-                snd_mixer_selem_get_playback_volume(master_elem, 0, &mixer_curr);
-                if ((mixer_curr-1) < mixer_min)
-                    mixer_curr = mixer_min;
-                else
-                    mixer_curr--;
-                snd_mixer_selem_set_playback_volume_all(master_elem, mixer_curr);
-#if 0
-                percent = ((float)mixer_curr/mixer_max) * 100;
-                snprintf(buf, 10, "%s %i", MSG_VOL_DOWN, percent);
-                send_message(buf);
-                //volume_display(osd, percent);
-#endif                
-                break;
-            case KEY_VOL_UP:
-                snd_mixer_selem_get_playback_volume(master_elem, 0, &mixer_curr);
-                if ((mixer_curr+1) > mixer_max)
-                    mixer_curr = mixer_max;
-                else
-                    mixer_curr++;
-                snd_mixer_selem_set_playback_volume_all(master_elem, mixer_curr);
-#if 0
-                percent = ((float)mixer_curr/mixer_max) * 100;
-                snprintf(buf, 10, "%s %i", MSG_VOL_UP, percent);
-                send_message(buf);
-                //volume_display(osd, percent);
-#endif                
-                break;
+                    snprintf(msg, 14, "%s %i", MSG_VOL_DOWN, percent);
+                    if (send_message(c_fd, msg) == -1) {
+                        close(c_fd);
+                        c_fd = -1;
+                    }
+                    break;
+                case KEY_VOL_UP:
+                    snd_mixer_selem_get_playback_volume(master_elem, 0, &mixer_curr);
+                    if ((mixer_curr+1) > mixer_max)
+                        mixer_curr = mixer_max;
+                    else
+                        mixer_curr++;
+                    snd_mixer_selem_set_playback_volume_all(master_elem, mixer_curr);
+
+                    percent = ((float)mixer_curr/mixer_max) * 100;
+                    snprintf(msg, 12, "%s %i", MSG_VOL_UP, percent);
+                    if (send_message(c_fd, msg) == -1) {
+                        close(c_fd);
+                        c_fd = -1;
+                    }
+                    break;
+            }
+        }
+        if (fds[1].revents & POLLIN) {
+            if ((c_fd = accept(fds[1].fd, 0, 0)) < 0) {
+                fprintf(stderr, "Client accept failed: %s\n", strerror(errno));
+                goto cleanup;
+                return EXIT_FAILURE;
+            }
         }
     }
 
-    //xosd_destroy(osd);
 cleanup:
-    //close(client_fd);
-    close(s_fd);
+    for (i = 0; i < nfds; i++) {
+        close(fds[i].fd);
+    }
+    free(fds);
     snd_mixer_close(mixer_handle);
     close(ev_fd);
     unlink(VOLEVENTD_SOCKET);
     unlink(PID_FILE);
 
     return 0;
+}
+
+int
+send_message(int client, char *msg)
+{
+    int ret;
+    if (client < 0)
+        return 0;
+    ret = write(client, msg, strlen(msg));
+    return ret;
 }
