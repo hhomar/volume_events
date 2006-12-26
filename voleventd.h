@@ -3,6 +3,7 @@
 
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/stat.h>
 #include "messages.h"
 
 #define VERSION 0.9
@@ -16,10 +17,11 @@
 #define LONG(x) ((x)/BITS_PER_LONG)
 #define test_bit(bit, array)    ((array[LONG(bit)] >> OFF(bit)) & 1)
 
-#define PID_FILE "voleventd.pid"
-#define VOLEVENTD_SOCKET "voleventd.socket"
-//#define PID_FILE "/var/run/voleventd.pid"
-//#define VOLEVENTD_SOCKET "/var/run/voleventd.socket"
+//#define PID_FILE "voleventd.pid"
+//#define VOLEVENTD_SOCKET "voleventd.socket"
+#define PID_FILE "/var/run/voleventd.pid"
+#define VOLEVENTD_SOCKET "/var/run/voleventd.socket"
+#define SOCKET_PERMISSIONS (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP)
 
 #define KEY_MUTE_TOGGLE 113
 #define KEY_VOL_DOWN 114

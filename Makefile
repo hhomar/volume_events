@@ -17,5 +17,10 @@ server: $(SRV_NAME).c
 clean:
 	rm -f $(SRV_NAME) $(CLT_NAME)
 
-install:
-	cp -f $(SRV_NAME) $(CLT_NAME) /usr/bin/
+install: install-server install-client
+
+install-server:
+	cp -f $(SRV_NAME) $(DESTDIR)/usr/sbin/
+
+install-client:
+	cp -f $(CLT_NAME) $(DESTDIR)/usr/bin/

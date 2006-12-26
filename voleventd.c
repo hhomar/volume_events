@@ -139,6 +139,8 @@ main(int argc, char **argv)
         goto cleanup;
         return EXIT_FAILURE;
     }
+    fprintf(pid_fd, "%d\n", getpid());
+    fclose(pid_fd);
 
     if ((s_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
         fprintf(stderr, "Couldn't create a socket: %s\n", strerror(errno));
@@ -170,6 +172,10 @@ main(int argc, char **argv)
     /* non-blocking */ 
     sock_flags = fcntl(s_fd, F_GETFL, 0);
     fcntl(s_fd, F_SETFL, sock_flags | O_NONBLOCK);
+    
+    /* FIXME: how can this be made generic? */
+    chown(VOLEVENTD_SOCKET, -1, 29); /* 29 = audio group */
+    chmod(VOLEVENTD_SOCKET, SOCKET_PERMISSIONS);
 
     running = 1;
     while (running > 0) {

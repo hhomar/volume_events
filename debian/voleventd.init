@@ -1,0 +1,44 @@
+#! /bin/sh
+#
+# init.d script for voleventd
+
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+DAEMON=/usr/sbin/voleventd
+PID_FILE=/var/run/voleventd.pid
+NAME=voleventd
+DESC="volume event daemon"
+
+test -x $DAEMON || exit 0
+
+set -e
+
+case "$1" in
+  start)
+	echo -n "Starting ${DESC}: "
+	start-stop-daemon --start --quiet                            \
+                      --exec "${DAEMON}" --pidfile "${PID_FILE}" \
+                      >/dev/null 2>&1
+	echo "${NAME}."
+	;;
+  stop)
+	echo -n "Stopping ${DESC}: "
+	start-stop-daemon --stop --quiet --oknodo --retry 2          \
+                      --exec "${DAEMON}" --pidfile "${PID_FILE}" \
+                      >/dev/null 2>&1
+	echo "${NAME}."
+	;;
+  restart|force-reload)
+	echo -n "Restarting ${DESC}: "
+    $0 stop
+    sleep 1
+    $0 start
+	echo "${NAME}."
+	;;
+  *)
+	N=/etc/init.d/"${NAME}"
+	echo "Usage: ${N} {start|stop|restart|force-reload}" >&2
+	exit 1
+	;;
+esac
+
+exit 0
