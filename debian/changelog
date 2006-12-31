@@ -1,3 +1,9 @@
+voleventd (0.6-1) unstable; urgency=low
+
+  * Fix mixer issues
+
+ -- Heitham Omar <ice@homar.ukfsn.org>  Sun,  31 Dec 2006 22:50:00 +0000
+
 voleventd (0.5-1) unstable; urgency=low
 
   * Initial Release

@@ -20,6 +20,7 @@ build-stamp:
 	dh_testdir
 
 	$(MAKE) server
+	$(MAKE) client
 
 	touch build-stamp
 
@@ -39,6 +40,7 @@ install: build
 	dh_installdirs
 
 	$(MAKE) install-server DESTDIR=$(CURDIR)/debian/voleventd
+	$(MAKE) install-client DESTDIR=$(CURDIR)/debian/xosdvol
 
 # Build architecture-independent files here.
 binary-indep: build install

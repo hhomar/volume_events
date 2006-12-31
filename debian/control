@@ -6,9 +6,15 @@ Build-Depends: debhelper (>> 3.0.0), libasound2-dev
 Standards-Version: 3.6.2
 
 Package: voleventd
-Architecture: any
+Architecture: i386
 Depends: ${shlibs:Depends}
-Recommends: xosd_vol (>> 0.1)
+Recommends: xosdvol (>> 0.1)
 Description: Daemon to control sound volume
  voleventd is a daemon that controls the sound of your machine. It
  uses ALSA to interact with your sound card.
+
+Package: xosdvol
+Architecture: i386
+Depends: ${shlibs:Depends}
+Description: Daemon to control sound volume
+ xosdvol is a graphical interface to voleventd
