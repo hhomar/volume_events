@@ -11,7 +11,15 @@
 #include <errno.h>
 #include "voleventd.h"
 
-int send_message(int client, char *msg);
+struct master_mixer {
+    int status; /* muted or not */
+    long volume, max, min;
+    int client; /* FIXME: this shouldn't be here */
+};
+
+int send_message_volume(int client, int event, struct master_mixer *mm);
+int mute_volume_toggle(snd_mixer_elem_t *elem, int status);
+int mixer_elem_event(snd_mixer_elem_t *elem, unsigned int mask);
 
 static int running = -1;
 
@@ -23,7 +31,7 @@ void term_handler(int sig)
 int
 main(int argc, char **argv)
 {
-    int i, ev_fd, nfds, ev_event, err;
+    int i, ev_fd, nfds, poll_event, err;
     struct pollfd *fds;
     char ev_dev[20];
     unsigned long bit[NBITS(EV_MAX)];
@@ -32,19 +40,14 @@ main(int argc, char **argv)
     pid_t pid, sid;
     int should_fork = 1;
 
-    snd_mixer_t *mixer_handle;
     char card_id[] = "default";
     snd_mixer_elem_t *elem, *master_elem = NULL;
-    long mixer_min, mixer_max, mixer_curr;
-    int muted;
-    int percent;
+    snd_mixer_t *mixer_handle;
     
     FILE *pid_fd;
 
     int s_fd, c_fd = -1, sock_flags;
     struct sockaddr_un server;
-    
-    char msg[20];
     
 #ifdef SIGTERM
     signal(SIGTERM, term_handler);
@@ -53,7 +56,6 @@ main(int argc, char **argv)
 
     if (argc > 1) {
         if (strncmp(argv[1], "-nofork", 7) == 0)
-            printf("Not forking\n");
             should_fork = 0;
     }
 
@@ -84,8 +86,17 @@ main(int argc, char **argv)
             master_elem = elem;
     }
     
-    snd_mixer_selem_get_playback_volume_range(master_elem, &mixer_min, &mixer_max);
-    snd_mixer_selem_get_playback_volume(master_elem, 0, &mixer_curr);
+    struct master_mixer *mm = malloc(sizeof(struct master_mixer));
+    mm->client = -1;
+    snd_mixer_selem_get_playback_volume_range(master_elem, &mm->min, &mm->max);
+    snd_mixer_selem_get_playback_volume(master_elem, 0, &mm->volume);
+    snd_mixer_selem_get_playback_switch(master_elem, 0, &mm->status);
+    
+    snd_mixer_elem_set_callback(master_elem, mixer_elem_event);
+    snd_mixer_elem_set_callback_private(master_elem, mm);
+
+    fds = malloc(3 * sizeof(struct pollfd));
+    nfds = snd_mixer_poll_descriptors(mixer_handle, fds, 1);
 
     /* find keyboard event handler */
     int found_keyboard = 0;
@@ -107,10 +118,9 @@ main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    fds = malloc(2 * sizeof(struct pollfd));
-    fds[0].fd = ev_fd;
-    fds[0].events = POLLIN;
-    nfds = 1;
+    fds[1].fd = ev_fd;
+    fds[1].events = POLLIN;
+    nfds++;
 
     if (should_fork) {
         pid = fork();
@@ -148,8 +158,8 @@ main(int argc, char **argv)
         return EXIT_FAILURE;
     } 
     
-    fds[1].fd = s_fd;
-    fds[1].events = POLLIN;
+    fds[2].fd = s_fd;
+    fds[2].events = POLLIN;
     nfds++;
     
     memset(&server, 0, sizeof(struct sockaddr_un));
@@ -179,11 +189,14 @@ main(int argc, char **argv)
 
     running = 1;
     while (running > 0) {
-        ev_event = poll(fds, nfds, 200);
-       
-        if (fds[i].revents & POLLIN) {
-            ev_event = read(fds[0].fd, &ev, sizeof(struct input_event));
-            if (ev_event != sizeof(struct input_event))
+        poll_event = poll(fds, nfds, 200);
+
+        if (fds[0].revents & POLLIN) {
+            snd_mixer_handle_events(mixer_handle);
+        }
+        if (fds[1].revents & POLLIN) {
+            poll_event = read(fds[1].fd, &ev, sizeof(struct input_event));
+            if (poll_event != sizeof(struct input_event))
                 continue;
 
             /* only use keypresses, no key release */
@@ -192,56 +205,38 @@ main(int argc, char **argv)
 
             switch (ev.code) {
                 case KEY_MUTE_TOGGLE:
-                    snd_mixer_selem_get_playback_switch(master_elem, 0, &muted);
-                    snd_mixer_selem_set_playback_switch_all(master_elem, !muted);
-
-                    if (muted) {
-                        strcpy(msg, MSG_MUTE);
-                    }
-                    else {
-                        percent = ((float)mixer_curr/mixer_max) * 100;
-                        snprintf(msg, 12, "%s %i", MSG_UNMUTE, percent);
-                    }
+                    mm->status = mute_volume_toggle(master_elem, mm->status);
                     
-                    if (send_message(c_fd, msg) == -1) {
-                        close(c_fd);
-                        c_fd = -1;
-                    }
+                    c_fd = send_message_volume(c_fd, KEY_MUTE_TOGGLE, mm);
+                                        
                     break;
                 case KEY_VOL_DOWN:
-                    snd_mixer_selem_get_playback_volume(master_elem, 0, &mixer_curr);
-                    if ((mixer_curr-1) < mixer_min)
-                        mixer_curr = mixer_min;
+                    snd_mixer_selem_get_playback_volume(master_elem, 0, &mm->volume);
+                    if ((mm->volume-1) < mm->min)
+                        mm->volume = mm->min;
                     else
-                        mixer_curr--;
-                    snd_mixer_selem_set_playback_volume_all(master_elem, mixer_curr);
+                        mm->volume--;
+                    snd_mixer_selem_set_playback_volume_all(master_elem, mm->volume);
 
-                    percent = ((float)mixer_curr/mixer_max) * 100;
-                    snprintf(msg, 14, "%s %i", MSG_VOL_DOWN, percent);
-                    if (send_message(c_fd, msg) == -1) {
-                        close(c_fd);
-                        c_fd = -1;
-                    }
+                    c_fd = send_message_volume(c_fd, KEY_VOL_DOWN, mm);
+
                     break;
                 case KEY_VOL_UP:
-                    snd_mixer_selem_get_playback_volume(master_elem, 0, &mixer_curr);
-                    if ((mixer_curr+1) > mixer_max)
-                        mixer_curr = mixer_max;
+                    snd_mixer_selem_get_playback_volume(master_elem, 0, &mm->volume);
+                    if ((mm->volume+1) > mm->max)
+                        mm->volume = mm->max;
                     else
-                        mixer_curr++;
-                    snd_mixer_selem_set_playback_volume_all(master_elem, mixer_curr);
+                        mm->volume++;
+                    snd_mixer_selem_set_playback_volume_all(master_elem, mm->volume);
+                    
+                    c_fd = send_message_volume(c_fd, KEY_VOL_UP, mm);
 
-                    percent = ((float)mixer_curr/mixer_max) * 100;
-                    snprintf(msg, 12, "%s %i", MSG_VOL_UP, percent);
-                    if (send_message(c_fd, msg) == -1) {
-                        close(c_fd);
-                        c_fd = -1;
-                    }
                     break;
             }
         }
-        if (fds[1].revents & POLLIN) {
-            if ((c_fd = accept(fds[1].fd, 0, 0)) < 0) {
+        if (fds[2].revents & POLLIN) {
+            mm->client = c_fd = accept(fds[2].fd, 0, 0);
+            if (c_fd < 0) {
                 fprintf(stderr, "Client accept failed: %s\n", strerror(errno));
                 goto cleanup;
                 return EXIT_FAILURE;
@@ -254,6 +249,7 @@ cleanup:
         close(fds[i].fd);
     }
     free(fds);
+    free(mm);
     snd_mixer_close(mixer_handle);
     close(ev_fd);
     unlink(VOLEVENTD_SOCKET);
@@ -263,11 +259,80 @@ cleanup:
 }
 
 int
-send_message(int client, char *msg)
+send_message_volume(int client, int event, struct master_mixer *mm)
 {
-    int ret;
+    char msg[20];
+    int percent;
+    
     if (client < 0)
+        return -1;
+
+    switch (event) {
+        case KEY_VOL_DOWN:
+            percent = ((float)mm->volume/mm->max) * 100;
+            snprintf(msg, 14, "%s %i", MSG_VOL_DOWN, percent);
+
+            break;
+        case KEY_VOL_UP:
+            percent = ((float)mm->volume/mm->max) * 100;
+            snprintf(msg, 12, "%s %i", MSG_VOL_UP, percent);
+
+            break;
+        case KEY_MUTE_TOGGLE:
+            if (mm->status) {
+                percent = ((float)mm->volume/mm->max) * 100;
+                snprintf(msg, 12, "%s %i", MSG_UNMUTE, percent);
+            }
+            else {
+                strcpy(msg, MSG_MUTE);
+            }
+
+            break;
+    }
+
+    if (write(client, msg, strlen(msg)) == -1) {
+        close(client);
+        mm->client = -1;
+        return -1;
+    }
+    
+    return client;
+}
+
+int
+mute_volume_toggle(snd_mixer_elem_t *elem, int status)
+{
+    status = !status;
+    snd_mixer_selem_set_playback_switch_all(elem, status);
+    return status;
+}
+
+int
+mixer_elem_event(snd_mixer_elem_t *elem, unsigned int mask)
+{
+    int s;
+    long v;
+
+    if ((strcmp(snd_mixer_selem_get_name(elem), "Master") != 0) &&
+        (mask & SND_CTL_EVENT_MASK_VALUE))
         return 0;
-    ret = write(client, msg, strlen(msg));
-    return ret;
+
+    struct master_mixer *mm = snd_mixer_elem_get_callback_private(elem);
+    snd_mixer_selem_get_playback_switch(elem, 0, &s);
+    snd_mixer_selem_get_playback_volume(elem, 0, &v);
+
+    if (s != mm->status) {
+        mm->status = s;
+        send_message_volume(mm->client, KEY_MUTE_TOGGLE, mm);
+    }
+    else if (v < mm->volume) {
+        mm->volume = v;
+        send_message_volume(mm->client, KEY_VOL_DOWN, mm);
+    }
+    else if (v > mm->volume) {
+        mm->volume = v;
+        send_message_volume(mm->client, KEY_VOL_UP, mm);
+    }
+
+    return 0;
 }
