@@ -1,5 +1,5 @@
 SRV_NAME=voleventd
-CLT_NAME=xosd_vol
+CLT_NAME=xosdvol
 CC=gcc
 CFLAGS=-W -Wall -g
 SRV_LIBS=-lasound
