@@ -248,9 +248,11 @@ cleanup:
     for (i = 0; i < nfds; i++) {
         close(fds[i].fd);
     }
+    
     free(fds);
     free(mm);
-    snd_mixer_close(mixer_handle);
+    /* not sure this is correct */
+    free(mixer_handle);
     close(ev_fd);
     unlink(VOLEVENTD_SOCKET);
     unlink(PID_FILE);
@@ -270,21 +272,22 @@ send_message_volume(int client, int event, struct master_mixer *mm)
     switch (event) {
         case KEY_VOL_DOWN:
             percent = ((float)mm->volume/mm->max) * 100;
-            snprintf(msg, 14, "%s %i", MSG_VOL_DOWN, percent);
+            snprintf(msg, 16, "%s %i %i", MSG_VOL_DOWN, percent, mm->status);
 
             break;
         case KEY_VOL_UP:
             percent = ((float)mm->volume/mm->max) * 100;
-            snprintf(msg, 12, "%s %i", MSG_VOL_UP, percent);
+            snprintf(msg, 14, "%s %i %i", MSG_VOL_UP, percent, mm->status);
 
             break;
         case KEY_MUTE_TOGGLE:
             if (mm->status) {
                 percent = ((float)mm->volume/mm->max) * 100;
-                snprintf(msg, 12, "%s %i", MSG_UNMUTE, percent);
+                snprintf(msg, 14, "%s %i %i", MSG_UNMUTE, percent, mm->status);
             }
             else {
-                strcpy(msg, MSG_MUTE);
+                percent = ((float)mm->volume/mm->max) * 100;
+                snprintf(msg, 12, "%s %i %i", MSG_MUTE, percent, mm->status);
             }
 
             break;

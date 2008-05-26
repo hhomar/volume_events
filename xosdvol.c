@@ -8,6 +8,29 @@
 #include <xosd.h>
 #include "voleventd.h"
 
+struct volume {
+    int status;
+    int percent;
+};
+
+void
+parse(struct volume *vol, char *msg, int index)
+{
+    char sp[5], ss[1];
+    int i, j, p, s;
+
+    i = 0; j = index;
+    while ((sp[i++] = msg[j++]));
+    printf("sp: |%s|\n", sp);
+    p = atoi(sp);
+    printf("p: %i\n", p);
+    while (msg[j++] != ' ');
+    ss[0] = msg[j];
+    printf("ss: |%s|\n", ss);
+    s = atoi(ss);
+    printf("s: %i\n", s);
+}
+
 // could work out the index dynamically but it seems pointless
 int
 parse_percent(char *msg, int index)
@@ -24,11 +47,30 @@ parse_percent(char *msg, int index)
     return p;
 }
 
-void
-volume_display(xosd *osd, int percent)
+int
+parse_mute(char *msg, int index)
 {
-    char vol_percent[15];
-    snprintf(vol_percent, 15, "Volume - %i%%", percent);
+    char sp[5];
+    int i, j, p;
+
+    i = 0; j = index;
+    while (msg[j++] != ' ');
+    sp[0] = msg[j];
+    //printf("sp: |%s|\n", sp);
+    p = atoi(sp);
+    //printf("p: %i\n", p);
+    
+    return p;
+}
+
+void
+volume_display(xosd *osd, int percent, int muted)
+{
+    char vol_percent[25];
+    if (muted)
+        snprintf(vol_percent, 22, "Volume - %i%% (Muted)", percent);
+    else
+        snprintf(vol_percent, 14, "Volume - %i%%", percent);
     xosd_set_timeout(osd, 5);
     xosd_display(osd, 0, XOSD_string, vol_percent);
     xosd_display(osd, 1, XOSD_slider, percent);
@@ -67,16 +109,16 @@ main(void)
  
     while (read(s_fd, msg, 20)) {
         if (strncmp(msg, MSG_MUTE, 4) == 0) {
-            volume_display(osd, 0);
+            volume_display(osd, parse_percent(msg, 5), !parse_mute(msg, 5));
         }
         else if (strncmp(msg, MSG_UNMUTE, 6) == 0) {
-            volume_display(osd, parse_percent(msg, 7));
+            volume_display(osd, parse_percent(msg, 7), !parse_mute(msg, 7));
         }
         else if (strncmp(msg, MSG_VOL_UP, 6) == 0) {
-            volume_display(osd, parse_percent(msg, 7));
+            volume_display(osd, parse_percent(msg, 7), !parse_mute(msg, 7));
         }
         else if (strncmp(msg, MSG_VOL_DOWN, 8) == 0) {
-            volume_display(osd, parse_percent(msg, 9));
+            volume_display(osd, parse_percent(msg, 9), !parse_mute(msg, 9));
         }
         memset(msg, 0, 20);
     }
