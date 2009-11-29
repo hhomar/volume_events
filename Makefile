@@ -20,7 +20,9 @@ clean:
 install: install-server install-client
 
 install-server:
+	mkdir -p $(DESTDIR)/usr/sbin
 	cp -f $(SRV_NAME) $(DESTDIR)/usr/sbin/
 
 install-client:
+	mkdir -p $(DESTDIR)/usr/bin
 	cp -f $(CLT_NAME) $(DESTDIR)/usr/bin/
