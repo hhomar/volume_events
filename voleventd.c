@@ -194,7 +194,6 @@ main(int argc, char **argv)
 	goto cleanup;
     }
     chown(VOLEVENTD_SOCKET, -1, grp->gr_gid);
-    free(grp);
     chmod(VOLEVENTD_SOCKET, SOCKET_PERMISSIONS);
 
     running = 1;
