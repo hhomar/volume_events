@@ -3,6 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <signal.h>
 #include <sys/time.h>
 #include <linux/input.h>
@@ -14,11 +15,11 @@
 struct master_mixer {
     int status; /* muted or not */
     long volume, max, min;
-    int client; /* FIXME: this shouldn't be here */
+    int client; /* FIXME: this wouldn't work with multiple clients */
 };
 
-int send_message_volume(int client, int event, struct master_mixer *mm);
-int mute_volume_toggle(snd_mixer_elem_t *elem, int status);
+int send_message(int client, int event, struct master_mixer *mm);
+int mute_toogle(snd_mixer_elem_t *elem, int status);
 int mixer_elem_event(snd_mixer_elem_t *elem, unsigned int mask);
 
 static int running = -1;
@@ -100,18 +101,26 @@ main(int argc, char **argv)
 
     /* find keyboard event handler */
     int found_keyboard = 0;
-    for (i = 0; i < 5; i++) {
+    for (i = 0; i < 10; i++) {
         snprintf(ev_dev, 20, "/dev/input/event%d", i);
         if ((ev_fd = open(ev_dev, O_RDONLY)) >= 0) {
             ioctl(ev_fd, EVIOCGBIT(0, EV_MAX), bit);
-            
-            // only want to watch keyboard events
+
+	   // only want to watch keyboard events
             if (test_bit(EV_KEY, bit) && test_bit(EV_REP, bit)) {
-                found_keyboard = 1;
-                break;
+                /* with some keyboards the multimedia keys are accessed through 
+		 * another event stream */
+		if (!test_bit(EV_LED, bit)) {	    
+		   found_keyboard = 1;
+		   if (!should_fork)
+		     printf("Found keyboard at \%s\n", ev_dev);
+	           break;
+		}
+	       
             }
         }   
     }
+
     if (!found_keyboard) {
         fprintf(stderr, "Couldn't find a keyboard device. "
                 "Possibly permission problems\n");
@@ -147,7 +156,6 @@ main(int argc, char **argv)
     if (pid_fd == NULL) {
         fprintf(stderr, "Couldn't create file: %s\n", PID_FILE);
         goto cleanup;
-        return EXIT_FAILURE;
     }
     fprintf(pid_fd, "%d\n", getpid());
     fclose(pid_fd);
@@ -155,7 +163,6 @@ main(int argc, char **argv)
     if ((s_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
         fprintf(stderr, "Couldn't create a socket: %s\n", strerror(errno));
         goto cleanup;
-        return EXIT_FAILURE;
     } 
     
     fds[2].fd = s_fd;
@@ -170,21 +177,24 @@ main(int argc, char **argv)
                 sizeof(struct sockaddr_un)) < 0) {
         fprintf(stderr, "Bind failed: %s\n", strerror(errno));
         goto cleanup;
-        return EXIT_FAILURE;
     }
 
     if (listen(s_fd, 5) < 0) {
         fprintf(stderr, "Listen failed: %s\n", strerror(errno));
         goto cleanup;
-        return EXIT_FAILURE;
     }
    
     /* non-blocking */ 
     sock_flags = fcntl(s_fd, F_GETFL, 0);
     fcntl(s_fd, F_SETFL, sock_flags | O_NONBLOCK);
     
-    /* FIXME: how can this be made generic? */
-    chown(VOLEVENTD_SOCKET, -1, 29); /* 29 = audio group */
+    struct group *grp = getgrname("audio");
+    if (!grp) {
+	fprintf(stderr, "Couldn't find group 'audio'\n");
+	goto cleanup;
+    }
+    chown(VOLEVENTD_SOCKET, -1, grp->gr_gid);
+    free(grp);
     chmod(VOLEVENTD_SOCKET, SOCKET_PERMISSIONS);
 
     running = 1;
@@ -192,22 +202,22 @@ main(int argc, char **argv)
         poll_event = poll(fds, nfds, 200);
 
         if (fds[0].revents & POLLIN) {
-            snd_mixer_handle_events(mixer_handle);
+	   snd_mixer_handle_events(mixer_handle);
         }
         if (fds[1].revents & POLLIN) {
             poll_event = read(fds[1].fd, &ev, sizeof(struct input_event));
             if (poll_event != sizeof(struct input_event))
                 continue;
 
-            /* only use keypresses, no key release */
+            /* only check for keypresses. Don't care about key release */
             if (ev.value <= 0)
                 continue;
 
             switch (ev.code) {
                 case KEY_MUTE_TOGGLE:
-                    mm->status = mute_volume_toggle(master_elem, mm->status);
+                    mm->status = mute_toogle(master_elem, mm->status);
                     
-                    c_fd = send_message_volume(c_fd, KEY_MUTE_TOGGLE, mm);
+                    c_fd = send_message(c_fd, KEY_MUTE_TOGGLE, mm);
                                         
                     break;
                 case KEY_VOL_DOWN:
@@ -218,7 +228,7 @@ main(int argc, char **argv)
                         mm->volume--;
                     snd_mixer_selem_set_playback_volume_all(master_elem, mm->volume);
 
-                    c_fd = send_message_volume(c_fd, KEY_VOL_DOWN, mm);
+                    c_fd = send_message(c_fd, KEY_VOL_DOWN, mm);
 
                     break;
                 case KEY_VOL_UP:
@@ -229,7 +239,7 @@ main(int argc, char **argv)
                         mm->volume++;
                     snd_mixer_selem_set_playback_volume_all(master_elem, mm->volume);
                     
-                    c_fd = send_message_volume(c_fd, KEY_VOL_UP, mm);
+                    c_fd = send_message(c_fd, KEY_VOL_UP, mm);
 
                     break;
             }
@@ -239,19 +249,18 @@ main(int argc, char **argv)
             if (c_fd < 0) {
                 fprintf(stderr, "Client accept failed: %s\n", strerror(errno));
                 goto cleanup;
-                return EXIT_FAILURE;
             }
         }
     }
 
 cleanup:
+
     for (i = 0; i < nfds; i++) {
         close(fds[i].fd);
     }
     
     free(fds);
     free(mm);
-    /* not sure this is correct */
     free(mixer_handle);
     close(ev_fd);
     unlink(VOLEVENTD_SOCKET);
@@ -261,7 +270,7 @@ cleanup:
 }
 
 int
-send_message_volume(int client, int event, struct master_mixer *mm)
+send_message(int client, int event, struct master_mixer *mm)
 {
     char msg[20];
     int percent;
@@ -303,7 +312,7 @@ send_message_volume(int client, int event, struct master_mixer *mm)
 }
 
 int
-mute_volume_toggle(snd_mixer_elem_t *elem, int status)
+mute_toogle(snd_mixer_elem_t *elem, int status)
 {
     status = !status;
     snd_mixer_selem_set_playback_switch_all(elem, status);
@@ -326,15 +335,15 @@ mixer_elem_event(snd_mixer_elem_t *elem, unsigned int mask)
 
     if (s != mm->status) {
         mm->status = s;
-        send_message_volume(mm->client, KEY_MUTE_TOGGLE, mm);
+        send_message(mm->client, KEY_MUTE_TOGGLE, mm);
     }
     else if (v < mm->volume) {
         mm->volume = v;
-        send_message_volume(mm->client, KEY_VOL_DOWN, mm);
+        send_message(mm->client, KEY_VOL_DOWN, mm);
     }
     else if (v > mm->volume) {
         mm->volume = v;
-        send_message_volume(mm->client, KEY_VOL_UP, mm);
+        send_message(mm->client, KEY_VOL_UP, mm);
     }
 
     return 0;
