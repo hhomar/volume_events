@@ -188,7 +188,7 @@ main(int argc, char **argv)
     sock_flags = fcntl(s_fd, F_GETFL, 0);
     fcntl(s_fd, F_SETFL, sock_flags | O_NONBLOCK);
     
-    struct group *grp = getgrname("audio");
+    struct group *grp = getgrnam("audio");
     if (!grp) {
 	fprintf(stderr, "Couldn't find group 'audio'\n");
 	goto cleanup;
