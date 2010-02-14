@@ -1,0 +1,7 @@
+A small linux daemon to handle the volume keys on modern keyboards.
+
+Only works with ALSA.
+
+There is an optional OSD using the xosd library.
+
+There is a PKGBUILD for arch linux and a Debian directory.

@@ -1,0 +1,24 @@
+pkgname=voleventd
+pkgver=0.7
+pkgrel=1
+pkgdesc="A simple ALSA volume event daemon"
+url=""
+arch=('i686' 'x86_64')
+license=('MIT')
+options=
+depends=('alsa-lib')
+install=voleventd.install
+source=(voleventd-$pkgver.tar.gz
+	voleventd)
+md5sums=('b316af6b0440b78fcd65e0ed04f9cad4'
+	 'b628ec22293dd4efe2dacd33799f598c')
+
+build() {
+  cd $srcdir/$pkgname-$pkgver
+
+  make server || return 1
+  make PREFIX=/usr DESTDIR=$pkgdir install-server || return 1
+
+    install -m755 -d "${pkgdir}/etc/rc.d" || return 1
+    install -m755 "${srcdir}/voleventd" "${pkgdir}/etc/rc.d/" || return 1
+}
