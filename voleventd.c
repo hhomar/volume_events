@@ -13,7 +13,7 @@
 #include "voleventd.h"
 
 struct master_mixer {
-    int status; /* muted or not */
+    int muted;
     long volume, max, min;
     int client; /* FIXME: this wouldn't work with multiple clients */
 };
@@ -91,7 +91,7 @@ main(int argc, char **argv)
     mm->client = -1;
     snd_mixer_selem_get_playback_volume_range(master_elem, &mm->min, &mm->max);
     snd_mixer_selem_get_playback_volume(master_elem, 0, &mm->volume);
-    snd_mixer_selem_get_playback_switch(master_elem, 0, &mm->status);
+    snd_mixer_selem_get_playback_switch(master_elem, 0, &mm->muted);
     
     snd_mixer_elem_set_callback(master_elem, mixer_elem_event);
     snd_mixer_elem_set_callback_private(master_elem, mm);
@@ -108,9 +108,14 @@ main(int argc, char **argv)
 
 	   // only want to watch keyboard events
             if (test_bit(EV_KEY, bit) && test_bit(EV_REP, bit)) {
-                /* with some keyboards the multimedia keys are accessed through 
-		 * another event stream */
-		if (!test_bit(EV_LED, bit)) {	    
+		/* FIXME: this is a bogus check, it checks to see if the
+		 * device has an LED bit set.
+		 * Normal keyboards would have this set.
+		 * Multimedia keys in another event stream won't have
+		 * this bit set.
+		 * There needs to be a proper check to handle both
+		 * cases. */
+		if (test_bit(EV_LED, bit)) {	    
 		   found_keyboard = 1;
 		   if (!should_fork)
 		     printf("Found keyboard at \%s\n", ev_dev);
@@ -214,7 +219,7 @@ main(int argc, char **argv)
 
             switch (ev.code) {
                 case KEY_MUTE_TOGGLE:
-                    mm->status = mute_toogle(master_elem, mm->status);
+                    mm->muted = mute_toogle(master_elem, mm->muted);
                     
                     c_fd = send_message(c_fd, KEY_MUTE_TOGGLE, mm);
                                         
@@ -280,22 +285,22 @@ send_message(int client, int event, struct master_mixer *mm)
     switch (event) {
         case KEY_VOL_DOWN:
             percent = ((float)mm->volume/mm->max) * 100;
-            snprintf(msg, 16, "%s %i %i", MSG_VOL_DOWN, percent, mm->status);
+            snprintf(msg, 16, "%s %i %i", MSG_VOL_DOWN, percent, mm->muted);
 
             break;
         case KEY_VOL_UP:
             percent = ((float)mm->volume/mm->max) * 100;
-            snprintf(msg, 14, "%s %i %i", MSG_VOL_UP, percent, mm->status);
+            snprintf(msg, 14, "%s %i %i", MSG_VOL_UP, percent, mm->muted);
 
             break;
         case KEY_MUTE_TOGGLE:
-            if (mm->status) {
+            if (mm->muted) {
                 percent = ((float)mm->volume/mm->max) * 100;
-                snprintf(msg, 14, "%s %i %i", MSG_UNMUTE, percent, mm->status);
+                snprintf(msg, 14, "%s %i %i", MSG_UNMUTE, percent, mm->muted);
             }
             else {
                 percent = ((float)mm->volume/mm->max) * 100;
-                snprintf(msg, 12, "%s %i %i", MSG_MUTE, percent, mm->status);
+                snprintf(msg, 12, "%s %i %i", MSG_MUTE, percent, mm->muted);
             }
 
             break;
@@ -332,8 +337,8 @@ mixer_elem_event(snd_mixer_elem_t *elem, unsigned int mask)
     snd_mixer_selem_get_playback_switch(elem, 0, &s);
     snd_mixer_selem_get_playback_volume(elem, 0, &v);
 
-    if (s != mm->status) {
-        mm->status = s;
+    if (s != mm->muted) {
+        mm->muted = s;
         send_message(mm->client, KEY_MUTE_TOGGLE, mm);
     }
     else if (v < mm->volume) {
